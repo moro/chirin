@@ -46,13 +46,28 @@ bundle exec rake
 gem build chirin.gemspec
 ```
 
+## 最小Railsアプリ
+
+`test/dummy` に、SQLiteのメモリDBを使うRails 8.1.3.1アプリがある。
+`bundle exec rake` で単体テストとリクエストレベルの統合テストを実行できる。
+統合テストだけなら `bundle exec ruby -Ilib:test test/order_flow_test.rb`。
+
+`POST /orders` → `OrderForm` → 注文・明細・受付時点の宛先を同一トランザクションで保存
+→ commit後に `Events::OrderPlaced` → `OrderReceiptJob` → `OrderMailer` の順に動く。
+独自serializerがOrderをGlobalIDとして持ち回り、ジョブ実行時に再取得する。
+メールの宛先はCustomerの最新情報ではなくOrderのスナップショットを使う。
+
+テストでは受付成功、顧客メール変更後の配送、明細不正時のrollback、外側のtransactionのrollback、
+過去注文のインポートで受付メールが出ないことを確認する。
+テスト用アプリはリロードを無効化し、一度だけ購読登録する。
+after_commitはRails標準のAPIを直接使用する。配送保証や再実行時の重複防止はまだ扱わない。
+Mailer用DSLは追加せず、現在のJobアダプターから実際のメール送信まで検証している。
+
 ## 次に進める順序
 
-1. 小さなRailsアプリでOrderと明細を保存し、注文受付のrequest specからジョブを実行する。
-2. GlobalIDを使うイベントの復元を検証する。受付時点の必要情報はOrder側に保存する。
-3. `SubscribableMailer` を追加し、注文受付メールまで確かめる。
-4. 購読の所有・解除・再読み込みの仕組みを決める。
-5. commit後の報告を追加し、rollback時に報告しないことを検証する。
+1. `SubscribableMailer` を追加し、購読からメールのジョブ投入まで簡潔にする。
+2. 購読の所有・解除・再読み込みの仕組みを決める。
+3. サンプルのcommit後の報告をChirinのAPIにするか判断する。
 
 在庫引当はその後の拡張例。outboxは別の設計課題として扱う。
 ライセンスと公開先は公開前に決める。現段階はローカルで開発・コミットする。
