@@ -1,0 +1,5 @@
+require "active_support"
+require "active_support/event_reporter"
+require "active_job"
+require_relative "chirin/version"
+require_relative "chirin/subscribable_job"
