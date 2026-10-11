@@ -22,7 +22,9 @@ module Chirin
       def subscribe(event_type, reporter: Rails.event)
         filter = case event_type
         when Class
-          ->(event) { event[:payload].is_a?(event_type) }
+          name = event_type.name
+          raise ArgumentError, "event_type must be a named Class" unless name
+          ->(event) { event[:name] == name }
         when String, Symbol
           name = event_type.to_s
           ->(event) { event[:name] == name }

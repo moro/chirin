@@ -27,7 +27,9 @@ Rails.event.unsubscribe(subscriber)
 これはAPIの最小例。登録の自動化やRailsのリロード対応はまだ実装していない。
 繰り返しsubscribeすると重複登録になる。プロダクション導入用の完成品ではない。
 
-イベントクラスも購読できる。`subscribe(Events::OrderPlaced)` はpayloadの型を判定する。
+イベントクラスも購読できる。`subscribe(Events::OrderPlaced)` はイベント名とクラス名の完全一致で判定する。
+サブクラスは自動では購読しない。匿名クラスは指定できない。
+購読フィルタにはnameだけが渡るRails mainの仕様にも対応する。
 ジョブに渡すのはSERのevent Hash全体ではなくpayload。
 独自イベントオブジェクトはActive Jobのserializerを別途用意する必要がある。
 テストにシリアライズ・復元・実行の最小例がある。

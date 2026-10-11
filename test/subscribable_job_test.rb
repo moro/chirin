@@ -73,5 +73,23 @@ class SubscribableJobTest < Minitest::Test
     assert_raises(ArgumentError) do
       ReceiptJob.subscribe(nil, reporter: @reporter)
     end
+    assert_raises(ArgumentError) do
+      ReceiptJob.subscribe(Class.new, reporter: @reporter)
+    end
+  end
+
+  def test_class_filter_only_needs_the_name
+    reporter = Object.new
+    def reporter.subscribe(subscriber, &filter)
+      @filter = filter
+    end
+    def reporter.matches?(name)
+      @filter.call({ name: name }.freeze)
+    end
+
+    ReceiptJob.subscribe(OrderPlaced, reporter: reporter)
+    assert reporter.matches?(OrderPlaced.name)
+    refute reporter.matches?("order.placed")
+    refute reporter.matches?("OtherOrderPlaced")
   end
 end
