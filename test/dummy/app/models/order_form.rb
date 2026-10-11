@@ -1,4 +1,6 @@
 class OrderForm
+  attr_reader :customer, :items
+
   def initialize(customer:, items:)
     @customer = customer
     @items = items
@@ -6,8 +8,9 @@ class OrderForm
 
   def save!
     Order.transaction do |transaction|
-      order = Order.create!(customer: @customer, receipt_email: @customer.email)
-      @items.each { |item| order.order_items.create!(item) }
+      receipt_email = customer.email
+      order = Order.create!(customer:, receipt_email:)
+      items.each { order.order_items.create!(it) }
 
       # Also waits for an enclosing transaction. This is not durable delivery.
       transaction.after_commit do

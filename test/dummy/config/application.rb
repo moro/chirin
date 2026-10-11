@@ -24,7 +24,6 @@ module ChirinSample
 
     # Test-only app without reloading. Production reload ownership is separate.
     config.after_initialize do
-      ActiveJob::Serializers.add_serializers(Events::OrderPlacedSerializer)
       OrderReceiptJob.subscribe(Events::OrderPlaced)
       Rails.event.raise_on_error = true
     end

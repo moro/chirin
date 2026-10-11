@@ -31,7 +31,8 @@ Rails.event.unsubscribe(subscriber)
 サブクラスは自動では購読しない。匿名クラスは指定できない。
 購読フィルタにはnameだけが渡るRails mainの仕様にも対応する。
 ジョブに渡すのはSERのevent Hash全体ではなくpayload。
-独自イベントオブジェクトはActive Jobのserializerを別途用意する必要がある。
+Dataクラスに`Chirin::Event`をincludeすると、共通serializerで扱える（下記）。
+それ以外の独自イベントオブジェクトにはActive Jobのserializerを別途用意する。
 テストにシリアライズ・復元・実行の最小例がある。
 オブジェクト形式でnotifyした場合のSERのnameはクラス名であり、文字列のorder.placedとは異なる。
 
@@ -56,10 +57,36 @@ Rails.event.notify(Events::OrderPlaced.new(order: order))
 ```
 
 Mailerアクションにpayloadを引数一つとして渡し、`deliver_later`で投入する。
-Action Mailerはアプリ側で導入する。独自イベントにはJobと同じくActive Job serializerが必要。
+Action Mailerはアプリ側で導入する。イベントのシリアライズはJobと共通。
 文字列・Symbolのイベント名も指定でき、その場合の引数はpayload Hashになる。
 登録時にMailerアクションの存在を確認する。購読解除・重複登録・配送保証の扱いはJobと同じ。
 `test/subscribable_mailer_test.rb`で、実際のMailDeliveryJobを通したシリアライズ・配送を検証する。
+
+## Dataイベントのシリアライズ
+
+```ruby
+module Events
+  OrderPlaced = Data.define(:order) do
+    include Chirin::Event
+  end
+
+  OrderConfirmed = Data.define(:order, :confirmed_at) do
+    include Chirin::Event
+  end
+end
+```
+
+`require "chirin"`で`Chirin::EventSerializer`が一度登録される。
+イベントごとのserializer定義・登録は不要。名前付きDataクラスを対象とし、
+クラス名と`to_h`の属性を保存して、ジョブ実行時に`new(**attributes)`で復元する。
+復元先は`Chirin::Event`をincludeしたDataクラスに限定する。
+
+属性のシリアライズはActive Jobに委譲する。日時・ネストした配列やHash・Chirinイベントも扱える。
+Active RecordはGlobalIDで参照を保存し、実行時に再取得する。レコード内容のスナップショットではない。
+未対応の属性型はActive Jobのエラーにする。Dataのfreezeは浅く、属性の中身まではfreezeしない。
+
+ワーカーにも同じイベントクラスをロードできる必要がある。
+イベントクラスの改名・削除や属性変更は、投入済みジョブの復元に影響する。
 
 ## 開発
 
@@ -79,14 +106,17 @@ gem build chirin.gemspec
 
 `POST /orders` → `OrderForm` → 注文・明細・受付時点の宛先を同一トランザクションで保存
 → commit後に `Events::OrderPlaced` → `OrderReceiptJob` → `OrderMailer` の順に動く。
-独自serializerがOrderをGlobalIDとして持ち回り、ジョブ実行時に再取得する。
+Chirinの共通serializerがOrderをGlobalIDとして持ち回り、ジョブ実行時に再取得する。
 メールの宛先はCustomerの最新情報ではなくOrderのスナップショットを使う。
 
 テストでは受付成功、顧客メール変更後の配送、明細不正時のrollback、外側のtransactionのrollback、
 過去注文のインポートで受付メールが出ないことを確認する。
 テスト用アプリはリロードを無効化し、一度だけ購読登録する。
 after_commitはRails標準のAPIを直接使用する。配送保証や再実行時の重複防止はまだ扱わない。
-既存の注文フローはJobアダプター経由で維持し、Mailer用DSLは別の統合テストで検証する。
+注文フローはJobアダプター経由で、Mailer用DSLは別の統合テストで検証する。
+
+テスト用リクエストでは`X-Customer-Id`ヘッダーで`current_customer`を指定する。
+これは認証の実装ではない。本番アプリでは認証済みの顧客を取得する仕組みに置き換える。
 
 ## 次に進める順序
 

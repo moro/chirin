@@ -19,17 +19,20 @@ class OrderFlowTest < ActionDispatch::IntegrationTest
   test "request saves order and items, then serialized event sends receipt to snapshot" do
     assert_enqueued_jobs 1, only: OrderReceiptJob do
       post "/orders", params: {
-        order: { customer_id: @customer.id, items: [{ sku: "BOOK", quantity: 2 }] }
-      }, as: :json
+        order: { customer_id: -1, items: [{ sku: "BOOK", quantity: 2 }] }
+      }, headers: { "X-Customer-Id" => @customer.id.to_s }, as: :json
     end
     assert_response :created
     order = Order.find(response.parsed_body.fetch("id"))
+    assert_equal @customer.id, order.customer_id
     assert_equal "at-order@example.com", order.receipt_email
     assert_equal [["BOOK", 2]], order.order_items.pluck(:sku, :quantity)
     assert_empty ActionMailer::Base.deliveries
 
     argument = enqueued_jobs.fetch(0).fetch("arguments").fetch(0)
-    assert_equal order.to_global_id.to_s, argument.fetch("order").fetch(0).fetch("_aj_globalid")
+    assert_equal "Chirin::EventSerializer", argument.fetch("_aj_serialized")
+    assert_equal "Events::OrderPlaced", argument.fetch("event_class")
+    assert_equal order.to_global_id.to_s, argument.fetch("attributes").fetch(0).fetch("order").fetch("_aj_globalid")
     @customer.update!(email: "latest@example.com")
     perform_enqueued_jobs
 
@@ -43,10 +46,10 @@ class OrderFlowTest < ActionDispatch::IntegrationTest
   test "invalid item rolls back order and all items without notifying" do
     assert_no_enqueued_jobs do
       post "/orders", params: {
-        order: { customer_id: @customer.id, items: [
+        order: { items: [
           { sku: "BOOK", quantity: 1 }, { sku: "BROKEN", quantity: 0 }
         ] }
-      }, as: :json
+      }, headers: { "X-Customer-Id" => @customer.id.to_s }, as: :json
     end
     assert_response :unprocessable_entity
     assert_equal 0, Order.count

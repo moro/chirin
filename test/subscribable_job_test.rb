@@ -15,23 +15,9 @@ class SubscribableJobTest < Minitest::Test
     end
   end
 
-  OrderPlaced = Struct.new(:order_id, keyword_init: true)
-
-  class OrderPlacedSerializer < ActiveJob::Serializers::ObjectSerializer
-    def serialize(event)
-      super("order_id" => event.order_id)
-    end
-
-    def deserialize(hash)
-      OrderPlaced.new(order_id: hash.fetch("order_id"))
-    end
-
-    def klass
-      OrderPlaced
-    end
+  OrderPlaced = Data.define(:order_id) do
+    include Chirin::Event
   end
-
-  ActiveJob::Serializers.add_serializers(OrderPlacedSerializer)
 
   def setup
     @reporter = ActiveSupport::EventReporter.new
@@ -51,7 +37,7 @@ class SubscribableJobTest < Minitest::Test
     assert_equal({ order_id: 42 }, ReceiptJob.received)
   end
 
-  def test_custom_event_round_trips_with_explicit_serializer
+  def test_custom_event_round_trips_with_shared_serializer
     ReceiptJob.subscribe(OrderPlaced, reporter: @reporter)
     @reporter.notify("order.placed", order_id: 1)
     assert_empty ReceiptJob.queue_adapter.enqueued_jobs
