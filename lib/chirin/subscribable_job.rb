@@ -20,17 +20,7 @@ module Chirin
       # Returns the subscriber so its owner can unsubscribe before reloading.
       # Registration is explicit: repeated calls create repeated subscriptions.
       def subscribe(event_type, reporter: Rails.event)
-        filter = case event_type
-        when Class
-          name = event_type.name
-          raise ArgumentError, "event_type must be a named Class" unless name
-          ->(event) { event[:name] == name }
-        when String, Symbol
-          name = event_type.to_s
-          ->(event) { event[:name] == name }
-        else
-          raise ArgumentError, "event_type must be a Class, String, or Symbol"
-        end
+        filter = EventFilter.for(event_type)
 
         subscriber = JobSubscriber.new(self)
         reporter.subscribe(subscriber, &filter)

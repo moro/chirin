@@ -2,7 +2,7 @@
 
 イベントの呼び鈴が鳴ったら、後続処理へ。
 
-Rails.event と Active Job をつなぐ、小さなEDAのコンセプト実装。
+Rails.event と Active Job・Action Mailer をつなぐ、小さなEDAのコンセプト実装。
 Kaigi on Rails 2026「Event is what happens」の説明を、動くコードで確かめるために育てる。
 
 ## 最初の縦切り
@@ -38,6 +38,29 @@ Rails.event.unsubscribe(subscriber)
 購読者の呼び出しとジョブ投入は同期で行う。実行が非同期になるかはキューアダプターによる。
 例外処理はEventReporterとActive Jobの設定に従う。通知の永続化・配送保証は追加しない。
 
+## Mailerの購読
+
+```ruby
+class OrderMailer < ApplicationMailer
+  include Chirin::SubscribableMailer
+
+  def placed(event)
+    order = event.order
+    mail(to: order.receipt_email, subject: "ご注文を受け付けました")
+  end
+end
+
+subscriber = OrderMailer.subscribe(:placed, Events::OrderPlaced)
+Rails.event.notify(Events::OrderPlaced.new(order: order))
+# 必要になったら Rails.event.unsubscribe(subscriber)
+```
+
+Mailerアクションにpayloadを引数一つとして渡し、`deliver_later`で投入する。
+Action Mailerはアプリ側で導入する。独自イベントにはJobと同じくActive Job serializerが必要。
+文字列・Symbolのイベント名も指定でき、その場合の引数はpayload Hashになる。
+登録時にMailerアクションの存在を確認する。購読解除・重複登録・配送保証の扱いはJobと同じ。
+`test/subscribable_mailer_test.rb`で、実際のMailDeliveryJobを通したシリアライズ・配送を検証する。
+
 ## 開発
 
 Ruby 3.2以上、検証対象Railsコンポーネントは8.1.3.1。
@@ -63,13 +86,12 @@ gem build chirin.gemspec
 過去注文のインポートで受付メールが出ないことを確認する。
 テスト用アプリはリロードを無効化し、一度だけ購読登録する。
 after_commitはRails標準のAPIを直接使用する。配送保証や再実行時の重複防止はまだ扱わない。
-Mailer用DSLは追加せず、現在のJobアダプターから実際のメール送信まで検証している。
+既存の注文フローはJobアダプター経由で維持し、Mailer用DSLは別の統合テストで検証する。
 
 ## 次に進める順序
 
-1. `SubscribableMailer` を追加し、購読からメールのジョブ投入まで簡潔にする。
-2. 購読の所有・解除・再読み込みの仕組みを決める。
-3. サンプルのcommit後の報告をChirinのAPIにするか判断する。
+1. 購読の所有・解除・再読み込みの仕組みを決める。
+2. サンプルのcommit後の報告をChirinのAPIにするか判断する。
 
 在庫引当はその後の拡張例。outboxは別の設計課題として扱う。
 ライセンスと公開先は公開前に決める。現段階はローカルで開発・コミットする。
