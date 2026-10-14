@@ -1,127 +1,72 @@
 # Chirin
 
-イベントの呼び鈴が鳴ったら、後続処理へ。
+Small adapters connecting `Rails.event` to Active Job and Action Mailer.
 
-Rails.event と Active Job・Action Mailer をつなぐ、小さなEDAのコンセプト実装。
-Kaigi on Rails 2026「Event is what happens」の説明を、動くコードで確かめるために育てる。
+[日本語](README.ja.md)
 
-## 最初の縦切り
+## Setup
 
-```ruby
-class OrderReceiptJob < ApplicationJob
-  include Chirin::SubscribableJob
-
-  def perform(payload)
-    order = Order.find(payload.fetch(:order_id))
-    # 注文からたどれる受付時点の宛先へ、受付メールを送る。
-  end
-end
-
-subscriber = OrderReceiptJob.subscribe("order.placed")
-Rails.event.notify("order.placed", order_id: order.id)
-
-# 購読の所有者が解除する。再登録前にも必要。
-Rails.event.unsubscribe(subscriber)
-```
-
-これはAPIの最小例。登録の自動化やRailsのリロード対応はまだ実装していない。
-繰り返しsubscribeすると重複登録になる。プロダクション導入用の完成品ではない。
-
-イベントクラスも購読できる。`subscribe(Events::OrderPlaced)` はイベント名とクラス名の完全一致で判定する。
-サブクラスは自動では購読しない。匿名クラスは指定できない。
-購読フィルタにはnameだけが渡るRails mainの仕様にも対応する。
-ジョブに渡すのはSERのevent Hash全体ではなくpayload。
-Dataクラスに`Chirin::Event`をincludeすると、共通serializerで扱える（下記）。
-それ以外の独自イベントオブジェクトにはActive Jobのserializerを別途用意する。
-テストにシリアライズ・復元・実行の最小例がある。
-オブジェクト形式でnotifyした場合のSERのnameはクラス名であり、文字列のorder.placedとは異なる。
-
-購読者の呼び出しとジョブ投入は同期で行う。実行が非同期になるかはキューアダプターによる。
-例外処理はEventReporterとActive Jobの設定に従う。通知の永続化・配送保証は追加しない。
-
-## Mailerの購読
+Add your local checkout to the application's Gemfile, then run `bundle install`:
 
 ```ruby
-class OrderMailer < ApplicationMailer
-  include Chirin::SubscribableMailer
-
-  def placed(event)
-    order = event.order
-    mail(to: order.receipt_email, subject: "ご注文を受け付けました")
-  end
-end
-
-subscriber = OrderMailer.subscribe(:placed, Events::OrderPlaced)
-Rails.event.notify(Events::OrderPlaced.new(order: order))
-# 必要になったら Rails.event.unsubscribe(subscriber)
+gem "chirin", path: "../chirin"
 ```
 
-Mailerアクションにpayloadを引数一つとして渡し、`deliver_later`で投入する。
-Action Mailerはアプリ側で導入する。イベントのシリアライズはJobと共通。
-文字列・Symbolのイベント名も指定でき、その場合の引数はpayload Hashになる。
-登録時にMailerアクションの存在を確認する。購読解除・重複登録・配送保証の扱いはJobと同じ。
-`test/subscribable_mailer_test.rb`で、実際のMailDeliveryJobを通したシリアライズ・配送を検証する。
+Tested with Rails 8.1.3.1. Configure an Active Job queue adapter in your application.
 
-## Dataイベントのシリアライズ
+## Usage
+
+Define a named Data event. Including `Chirin::Event` enables serialization automatically.
 
 ```ruby
 module Events
   OrderPlaced = Data.define(:order) do
     include Chirin::Event
   end
-
-  OrderConfirmed = Data.define(:order, :confirmed_at) do
-    include Chirin::Event
-  end
 end
 ```
 
-`require "chirin"`で`Chirin::EventSerializer`が一度登録される。
-イベントごとのserializer定義・登録は不要。名前付きDataクラスを対象とし、
-クラス名と`to_h`の属性を保存して、ジョブ実行時に`new(**attributes)`で復元する。
-復元先は`Chirin::Event`をincludeしたDataクラスに限定する。
+Subscribe a job or mailer. Both receive the event payload as their single argument.
 
-属性のシリアライズはActive Jobに委譲する。日時・ネストした配列やHash・Chirinイベントも扱える。
-Active RecordはGlobalIDで参照を保存し、実行時に再取得する。レコード内容のスナップショットではない。
-未対応の属性型はActive Jobのエラーにする。Dataのfreezeは浅く、属性の中身まではfreezeしない。
+```ruby
+class ReserveInventoryJob < ApplicationJob
+  include Chirin::SubscribableJob
 
-ワーカーにも同じイベントクラスをロードできる必要がある。
-イベントクラスの改名・削除や属性変更は、投入済みジョブの復元に影響する。
+  def perform(event)
+    # Reserve inventory for event.order.
+  end
+end
 
-## 開発
+class OrderMailer < ApplicationMailer
+  include Chirin::SubscribableMailer
 
-Ruby 3.2以上、検証対象Railsコンポーネントは8.1.3.1。
+  def placed(event)
+    mail(to: event.order.receipt_email,
+         subject: "Order received", body: "Thank you for your order.")
+  end
+end
+
+# Register once after the classes are loaded.
+job_subscriber = ReserveInventoryJob.subscribe(Events::OrderPlaced)
+mail_subscriber = OrderMailer.subscribe(:placed, Events::OrderPlaced)
+
+# Report after the order's transaction commits.
+Rails.event.notify(Events::OrderPlaced.new(order: order))
+```
+
+Jobs use `perform_later`; mailers use `deliver_later`.
+String and Symbol event names are also supported; their payload is a Hash.
+Class subscriptions match the exact class name, not subclasses.
+
+## Notes
+
+- Active Job serializes event attributes. Active Record objects are reloaded through GlobalID, not stored as snapshots. Workers must be able to load the event class.
+- Register subscriptions explicitly. Repeated registration creates duplicates; automatic reload handling is not provided. Remove a subscription with `Rails.event.unsubscribe(job_subscriber)` before replacing it.
+- Chirin does not manage transaction boundaries, persist notifications, or guarantee delivery. Enqueuing is synchronous; execution follows your queue adapter.
+
+## Tests
 
 ```sh
 bundle install
 bundle exec rake
-gem build chirin.gemspec
 ```
-
-## 最小Railsアプリ
-
-`test/dummy` に、SQLiteのメモリDBを使うRails 8.1.3.1アプリがある。
-`bundle exec rake` で単体テストとリクエストレベルの統合テストを実行できる。
-統合テストだけなら `bundle exec ruby -Ilib:test test/order_flow_test.rb`。
-
-`POST /orders` → `OrderForm` → 注文・明細・受付時点の宛先を同一トランザクションで保存
-→ commit後に `Events::OrderPlaced` → `OrderReceiptJob` → `OrderMailer` の順に動く。
-Chirinの共通serializerがOrderをGlobalIDとして持ち回り、ジョブ実行時に再取得する。
-メールの宛先はCustomerの最新情報ではなくOrderのスナップショットを使う。
-
-テストでは受付成功、顧客メール変更後の配送、明細不正時のrollback、外側のtransactionのrollback、
-過去注文のインポートで受付メールが出ないことを確認する。
-テスト用アプリはリロードを無効化し、一度だけ購読登録する。
-after_commitはRails標準のAPIを直接使用する。配送保証や再実行時の重複防止はまだ扱わない。
-注文フローはJobアダプター経由で、Mailer用DSLは別の統合テストで検証する。
-
-テスト用リクエストでは`X-Customer-Id`ヘッダーで`current_customer`を指定する。
-これは認証の実装ではない。本番アプリでは認証済みの顧客を取得する仕組みに置き換える。
-
-## 次に進める順序
-
-1. 購読の所有・解除・再読み込みの仕組みを決める。
-2. サンプルのcommit後の報告をChirinのAPIにするか判断する。
-
-在庫引当はその後の拡張例。outboxは別の設計課題として扱う。
-ライセンスと公開先は公開前に決める。現段階はローカルで開発・コミットする。
